@@ -1,0 +1,175 @@
+<html>
+
+<head>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
+    integrity="sha256-kLaT2GOSpHechhsozzB+flnD+zUyjE2LlfWPgU04xyI=" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"
+    integrity="sha256-WBkoXOwTeyKclOHuWtc+i2uENFpDZ9YPdf5Hf+D7ewM=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js" crossorigin=""></script>
+  <style>
+    body {
+      padding: 0;
+      margin: 0;
+    }
+
+    #map {
+      padding: 0;
+      margin: 0;
+      height: 66%;
+    }
+
+    #images {
+      padding: 0;
+      margin: 0;
+      height: 34%;
+      width: 100%;
+      overflow-y: scroll;
+    }
+
+    .thumb {
+      width: 19%;
+      height: auto;
+    }
+  </style>
+  <title>Hivemapper Internal Imagery API Helper</title>
+</head>
+
+<body>
+  <div id="map"></div>
+  <div id="images">Draw a rectangle to load images in this section.</div>
+  <script>
+    const cache = {};
+    async function fetchFromPolygon(url) {
+      if (cache[url]) {
+        return cache[url];
+      }
+      const res = await fetch(url, { method: 'GET' });
+      if (res.status === 429) throw new Error('Too many requests! Try again later.');
+      if (res.status !== 200) throw new Error('Imagery not found!');
+      const json = await res.json();
+      cache[url] = json;
+      return json;
+    }
+    async function loadPopupHack(corners) {
+      const url =
+        'https://hivemapper.com/api/imagery/consume/' +
+        corners.map(c => `${c.lng},${c.lat}`).join('/');
+
+      const elt = document.getElementById('images');
+      elt.innerHTML = `Loading ${url}...`;
+
+      let json = {};
+      try {
+        json = await fetchFromPolygon(url);
+      } catch (err) {
+        elt.innerHTML = String(err);
+        return;
+      }
+
+      if (!json.assets?.length) {
+        elt.innerHTML = 'No results found';
+        return;
+      }
+
+      const html =
+        '<div>' +
+        json.assets
+          .map(
+            a =>
+              `<a href="${a}" target="_blank"><img src="${a}" class="thumb" />`,
+          )
+          .join('') +
+        '</div>';
+      elt.innerHTML = html;
+
+      return json.assets.length;
+    }
+    var osmUrl = 'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      osmAttrib =
+        '&copy; <a href="http://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      osm = L.tileLayer(osmUrl, { maxZoom: 18, attribution: osmAttrib }),
+      map = new L.Map('map', {
+        center: new L.LatLng(37.7749, -122.4194),
+        zoom: 15,
+      }),
+      drawnItems = L.featureGroup().addTo(map);
+
+    L.control
+      .layers(
+        {
+          osm: osm.addTo(map),
+          google: L.tileLayer(
+            'http://www.google.cn/maps/vt?lyrs=s@189&gl=cn&x={x}&y={y}&z={z}',
+            {
+              attribution: 'google',
+            },
+          ),
+        },
+        { drawlayer: drawnItems },
+        { position: 'topright', collapsed: false },
+      )
+      .addTo(map);
+
+    map.addControl(
+      new L.Control.Draw({
+        edit: {
+          featureGroup: drawnItems,
+          poly: {
+            allowIntersection: false,
+          },
+        },
+        draw: {
+          polygon: false,
+          polyline: false,
+          circlemarker: false,
+          marker: false,
+          circle: false,
+        },
+      }),
+    );
+
+    // Truncate value based on number of decimals
+    var _round = function (num, len) {
+      return Math.round(num * Math.pow(10, len)) / Math.pow(10, len);
+    };
+    // Helper method to format LatLng object (x.xxxxxx, y.yyyyyy)
+    var strLatLng = function (latlng) {
+      return '(' + _round(latlng.lat, 6) + ', ' + _round(latlng.lng, 6) + ')';
+    };
+
+    // Generate popup content based on layer type
+    // - Returns HTML string, or null if unknown object
+    var getPopupContent = async function (layer) {
+      var latlngs = layer._defaultShape
+        ? layer._defaultShape()
+        : layer.getLatLngs(),
+        area = L.GeometryUtil.geodesicArea(latlngs);
+      return await loadPopupHack(latlngs);
+    };
+
+    // Object created - bind popup to layer, add to feature group
+    map.on(L.Draw.Event.CREATED, function (event) {
+      var layer = event.layer;
+      var content = getPopupContent(layer);
+      if (content !== null) {
+        layer.bindPopup(content);
+      }
+      drawnItems.addLayer(layer);
+    });
+
+    // Object(s) edited - update popups
+    map.on(L.Draw.Event.EDITED, function (event) {
+      var layers = event.layers,
+        content = null;
+      layers.eachLayer(function (layer) {
+        content = getPopupContent(layer);
+        if (content !== null) {
+          layer.setPopupContent(content);
+        }
+      });
+    });
+  </script>
+</body>
+
+</html>
